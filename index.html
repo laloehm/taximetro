@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#EAB308">
+    <title>Taxímetro</title>
+    <link rel="manifest" href="/manifest.json">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { -webkit-tap-highlight-color: transparent; }
+        body { overscroll-behavior: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-yellow-500 via-yellow-400 to-orange-500 min-h-screen">
+    <div id="app">
+        <!-- Opcional: Contenido de carga inicial o placeholder -->
+        <div class="flex items-center justify-center min-h-screen text-gray-700">Cargando...</div>
+    </div>
+
+    <script>
+        const State = {
+            isRunning: false,
+            fare: 0,
+            distance: 0,
+            time: 0,
+            startTime: null,
+            intervalId: null,
+            currentView: 'main',
+            settings: {
+                baseFare: 9.00,
+                incrementAmount: 2.00,
+                incrementInterval: 45
+            },
+            tripHistory: []
+        };
+
+        var Storage = {
+            save: function(key, data) {
+                try {
+                    localStorage.setItem(key, JSON.stringify(data));
+                } catch (e) {
+                    console.error('Error guardando en localStorage:', e);
+                }
+            },
+            load: function(key, defaultValue) {
+                if (!defaultValue) {
+                    defaultValue = null;
+                }
+                try {
+                    var item = localStorage.getItem(key);
+                    return item ? JSON.parse(item) : defaultValue;
+                } catch (e) {
+                    console.error('Error cargando de localStorage:', e);
+                    return defaultValue;
+                }
+            }
+        };
+
+        function loadData() {
+            State.settings = Storage.load('settings', State.settings);
+            State.tripHistory = Storage.load('tripHistory', []);
+            console.log('Datos cargados. Historial de viajes:', State.tripHistory.length, 'viajes.');
+        }
+
+        function startTrip() {
+            if (!State.isRunning) {
+                State.isRunning = true;
+                State.fare = State.settings.baseFare;
+                State.startTime = new Date();
+                State.time = 0;
+                State.distance = 0; 
+                
+                State.intervalId = setInterval(function() {
+                    State.time++;
+                    const increments = Math.floor(State.time / State.settings.incrementInterval);
+                    State.fare = State.settings.baseFare + (increments * State.settings.incrementAmount);
+                    State.distance = (State.time / 3600) * 40; 
+                    render();
+                }, 1000);
+                
+                render();
+                console.log('Viaje iniciado. Tarifa inicial:', State.fare.toFixed(2));
+            }
+        }
+
+        function stopTrip() {
+            if (State.isRunning) {
+                State.isRunning = false;
+                clearInterval(State.intervalId);
+                
+                if (State.time > 0) {
+                    const trip = {
+                        id: Date.now(),
+                        date: new Date().toISOString(),
+                        startTime: State.startTime.toISOString(),
+                        endTime: new Date().toISOString(),
+                        duration: State.time,
+                        distance: State.distance,
+                        fare: State.fare,
+                        increments: Math.floor(State.time / State.settings.incrementInterval)
+                    };
+                    
+                    State.tripHistory.unshift(trip);
+                    Storage.save('tripHistory', State.tripHistory);
+                    console.log('Viaje finalizado y guardado. ID:', trip.id, 'Tarifa:', trip.fare.toFixed(2));
+                } else {
+                    console.log('Viaje detenido, pero no se guardó porque la duración fue 0.');
+                }
+                
+                render();
+            }
+        }
+
+        function resetTrip() {
+            State.isRunning = false;
+            State.fare = 0;
+            State.distance = 0; 
+            State.time = 0;
+            clearInterval(State.intervalId);
+            render();
+            console.log('Viaje reiniciado.');
+        }
+
+        function deleteTrip(id) {
+            console.log('deleteTrip() llamado con ID:', id, ' (Tipo recibido:', typeof id, ')'); 
+            console.log('IDs en tripHistory antes del filtro:', State.tripHistory.map(t => t.id + ' (Tipo: ' + typeof t.id + ')')); 
+
+            if (confirm('¿Eliminar este viaje?')) {
+                const initialLength = State.tripHistory.length;
+                
+                // === INICIO DE LA CORRECCIÓN CLAVE ===
+                // Convertimos el ID recibido a número para asegurar la comparación de tipos.
+                const idToDelete = Number(id); 
+                // === FIN DE LA CORRECCIÓN CLAVE ===
+
+                State.tripHistory = State.tripHistory.filter(function(t) { 
+                    return t.id !== idToDelete; 
+                });
+                const newLength = State.tripHistory.length;
+                console.log('Se intentó eliminar el ID:', idToDelete, 'Longitud antes:', initialLength, 'Longitud después:', newLength);
+                
+                if (initialLength === newLength) {
+                    console.warn('¡El viaje no fue encontrado o no se eliminó! El ID', idToDelete, 'no coincidió con ningún viaje existente.');
+                } else {
+                    console.log('Viaje con ID', idToDelete, 'eliminado con éxito.');
+                }
+                Storage.save('tripHistory', State.tripHistory);
+                render();
+            } else {
+                console.log('Eliminación cancelada para ID:', id);
+            }
+        }
+
+        function clearHistory() {
+            if (confirm('¿Borrar todo el historial?')) {
+                State.tripHistory = [];
+                Storage.save('tripHistory', State.tripHistory);
+                render();
+                console.log('Historial de viajes borrado.');
+            }
+        }
+
+        function updateSetting(key, value) {
+            State.settings[key] = parseFloat(value) || 0;
+            Storage.save('settings', State.settings);
+            console.log('Configuración actualizada:', key, '=', State.settings[key]);
+        }
+
+        function changeView(view) {
+            State.currentView = view;
+            render();
+            console.log('Cambiando vista a:', view);
+        }
+
+        function formatTime(seconds) {
+            const hrs = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return hrs.toString().padStart(2, '0') + ':' + 
+                   mins.toString().padStart(2, '0') + ':' + 
+                   secs.toString().padStart(2, '0');
+        }
+
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            
+            if (date.toDateString() === today.toDateString()) return 'Hoy';
+            if (date.toDateString() === yesterday.toDateString()) return 'Ayer';
+            
+            return date.toLocaleDateString('es-MX', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+            });
+        }
+
+        function groupTripsByDay() {
+            const grouped = {};
+            State.tripHistory.forEach(function(trip) {
+                const date = new Date(trip.date).toDateString();
+                if (!grouped[date]) {
+                    grouped[date] = [];
+                }
+                grouped[date].push(trip);
+            });
+            return grouped;
+        }
+
+        function getDayStats(trips) {
+            const total = trips.reduce(function(sum, t) { return sum + t.fare; }, 0);
+            const distance = trips.reduce(function(sum, t) { return sum + t.distance; }, 0);
+            const time = trips.reduce(function(sum, t) { return sum + t.duration; }, 0);
+            return { total: total, distance: distance, time: time, count: trips.length };
+        }
+
+        function renderMain() {
+            const s = State.settings;
+            const nextInc = s.incrementInterval - (State.time % s.incrementInterval);
+            
+            var html = '<div class="max-w-md mx-auto p-6">';
+            html += '<div class="flex items-center justify-between mb-6">';
+            html += '<h1 class="text-2xl font-bold text-gray-900">TAXÍMETRO</h1>';
+            html += '<div class="flex gap-2">';
+            html += '<button onclick="changeView(\'history\')" class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 relative">';
+            html += '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+            html += '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+            if (State.tripHistory.length > 0) {
+                html += '<span class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs">' + State.tripHistory.length + '</span>';
+            }
+            html += '</button>';
+            html += '<button onclick="changeView(\'settings\')" class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100">';
+            html += '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+            html += '<circle cx="12" cy="12" r="3"/>';
+            html += '<path d="M12 1v6m0 6v6M5.6 5.6l4.2 4.2m4.2 4.2l4.2 4.2M1 12h6m6 0h6M5.6 18.4l4.2-4.2m4.2-4.2l4.2-4.2"/>';
+            html += '</svg></button></div></div>';
+
+            html += '<div class="bg-black rounded-2xl p-6 mb-4 shadow-2xl">';
+            html += '<div class="text-center">';
+            html += '<div class="text-5xl font-bold text-green-400 mb-1">$' + State.fare.toFixed(2) + '</div>';
+            html += '<div class="text-base text-gray-400">' + (State.isRunning ? 'EN SERVICIO' : 'DISPONIBLE') + '</div>';
+            html += '</div></div>';
+
+            html += '<div class="grid grid-cols-2 gap-3 mb-4">';
+            html += '<div class="bg-white rounded-xl p-3 shadow-lg">';
+            html += '<div class="text-gray-600 text-xs mb-1">Distancia</div>';
+            html += '<div class="text-2xl font-bold text-gray-900">' + State.distance.toFixed(2) + '</div>';
+            html += '<div class="text-gray-500 text-xs">km</div></div>';
+            html += '<div class="bg-white rounded-xl p-3 shadow-lg">';
+            html += '<svg class="w-4 h-4 text-gray-600 mb-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+            html += '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+            html += '<div class="text-2xl font-bold text-gray-900 mt-1">' + formatTime(State.time) + '</div>';
+            html += '<div class="text-gray-500 text-xs">tiempo</div></div></div>';
+
+            html += '<div class="space-y-2">';
+            if (!State.isRunning) {
+                html += '<button onclick="startTrip()" class="w-full py-4 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2">';
+                html += '<svg class="w-6 h-6" fill="white" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+                html += 'INICIAR VIAJE</button>';
+            } else {
+                html += '<button onclick="stopTrip()" class="w-full py-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2">';
+                html += '<svg class="w-6 h-6" fill="white" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg>';
+                html += 'FINALIZAR VIAJE</button>';
+            }
+            
+            if (!State.isRunning && (State.fare > 0 || State.time > 0)) {
+                html += '<button onclick="resetTrip()" class="w-full py-3 bg-gray-700 hover:bg-gray-800 text-white rounded-xl font-bold shadow-lg">NUEVO VIAJE</button>';
+            }
+            html += '</div>';
+
+            if (State.isRunning) {
+                html += '<div class="mt-4 bg-white bg-opacity-90 rounded-xl p-3 text-xs">';
+                html += '<div class="font-bold text-gray-900 mb-2">Desglose:</div>';
+                html += '<div class="space-y-1 text-gray-700">';
+                html += '<div class="flex justify-between"><span>Tarifa inicial:</span><span>$' + s.baseFare.toFixed(2) + '</span></div>';
+                html += '<div class="flex justify-between"><span>Incrementos (' + Math.floor(State.time / s.incrementInterval) + '):</span>';
+                html += '<span>$' + (Math.floor(State.time / s.incrementInterval) * s.incrementAmount).toFixed(2) + '</span></div>';
+                html += '<div class="flex justify-between text-gray-500"><span>Próximo incremento en:</span><span>' + nextInc + 's</span></div>';
+                html += '</div></div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderHistory() {
+            const groupedTrips = groupTripsByDay();
+            const days = Object.keys(groupedTrips).sort(function(a, b) { return new Date(b) - new Date(a); });
+            const totalStats = getDayStats(State.tripHistory);
+            
+            var html = '<div class="max-w-md mx-auto p-6 min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white">';
+            html += '<div class="flex items-center justify-between mb-6">';
+            html += '<h2 class="text-2xl font-bold">Historial de Viajes</h2>';
+            html += '<button onclick="changeView(\'main\')" class="p-2 bg-gray-700 rounded-lg hover:bg-gray-600">';
+            html += '<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+            html += '<path d="M6 18L18 6M6 6l12 12"/></svg></button></div>';
+
+            if (State.tripHistory.length > 0) {
+                html += '<div class="bg-gradient-to-r from-green-600 to-green-500 rounded-xl p-4 mb-4 shadow-lg">';
+                html += '<div class="text-sm text-green-100 mb-1">Total Recaudado</div>';
+                html += '<div class="text-3xl font-bold">$' + totalStats.total.toFixed(2) + '</div>';
+                html += '<div class="grid grid-cols-3 gap-2 mt-3 text-xs">';
+                html += '<div><div class="text-green-100">Viajes</div><div class="font-bold">' + totalStats.count + '</div></div>';
+                html += '<div><div class="text-green-100">Distancia</div><div class="font-bold">' + totalStats.distance.toFixed(1) + ' km</div></div>';
+                html += '<div><div class="text-green-100">Tiempo</div><div class="font-bold">' + Math.floor(totalStats.time / 60) + ' min</div></div>'; 
+                html += '</div></div>';
+
+                html += '<div class="flex justify-between items-center mb-3">';
+                html += '<span class="text-sm text-gray-400">' + State.tripHistory.length + ' viaje(s)</span>';
+                html += '<button onclick="clearHistory()" class="text-sm text-red-400 hover:text-red-300 flex items-center gap-1">';
+                html += '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+                html += '<path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>';
+                html += 'Borrar todo</button></div>';
+
+                html += '<div class="space-y-4 max-h-[600px] overflow-y-auto no-scrollbar">';
+                days.forEach(function(day) {
+                    const trips = groupedTrips[day];
+                    const dayStats = getDayStats(trips);
+                    
+                    html += '<div class="bg-gray-800 rounded-xl p-4 shadow-lg">';
+                    html += '<div class="flex justify-between items-center mb-3 pb-2 border-b border-gray-700">';
+                    html += '<h3 class="font-bold text-lg">' + formatDate(trips[0].date) + '</h3>';
+                    html += '<div class="text-right">';
+                    html += '<div class="text-xl font-bold text-green-400">$' + dayStats.total.toFixed(2) + '</div>';
+                    html += '<div class="text-xs text-gray-400">' + dayStats.count + ' viaje(s)</div>';
+                    html += '</div></div>';
+                    
+                    html += '<div class="space-y-2">';
+                    trips.forEach(function(trip) {
+                        // console.log('Renderizando botón para viaje ID:', trip.id); // Log para verificar el ID
+                        html += '<div class="bg-gray-700 rounded-lg p-3">';
+                        html += '<div class="flex justify-between items-start mb-2">';
+                        html += '<div><div class="text-xs text-gray-400">';
+                        html += new Date(trip.date).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                        html += '</div><div class="text-xl font-bold text-green-400">$' + trip.fare.toFixed(2) + '</div></div>';
+                        html += '<button onclick="deleteTrip(' + trip.id + ')" class="p-1 text-gray-500 hover:text-red-400">'; 
+                        html += '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+                        html += '<path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/></svg>';
+                        html += '</button></div>';
+                        html += '<div class="grid grid-cols-3 gap-2 text-xs">';
+                        html += '<div><div class="text-gray-400">Duración</div><div class="font-semibold">' + formatTime(trip.duration) + '</div></div>';
+                        html += '<div><div class="text-gray-400">Distancia</div><div class="font-semibold">' + trip.distance.toFixed(2) + ' km</div></div>';
+                        html += '<div><div class="text-gray-400">Incrementos</div><div class="font-semibold">' + trip.increments + '</div></div>';
+                        html += '</div></div>';
+                    });
+                    html += '</div></div>';
+                });
+                html += '</div>';
+            } else {
+                html += '<div class="text-center text-gray-400 mt-12">';
+                html += '<svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">';
+                html += '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+                html += '<p class="mt-4">No hay viajes registrados</p></div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderSettings() {
+            const s = State.settings;
+            var html = '<div class="max-w-md mx-auto p-6 min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 text-white">';
+            html += '<div class="flex items-center justify-between mb-6">';
+            html += '<h2 class="text-2xl font-bold">Configuración</h2>';
+            html += '<button onclick="changeView(\'main\')" class="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700">Volver</button>'; 
+            html += '</div>';
+
+            html += '<div class="space-y-4 bg-gray-800 rounded-xl p-6">';
+            html += '<div><label class="block text-sm mb-2">Tarifa Inicial ($)</label>';
+            html += '<input type="number" value="' + s.baseFare + '" onchange="updateSetting(\'baseFare\', this.value)" ';
+            html += 'class="w-full px-4 py-2 bg-gray-700 rounded-lg text-white" step="0.10"></div>';
+            html += '<div><label class="block text-sm mb-2">Incremento por Intervalo ($)</label>';
+            html += '<input type="number" value="' + s.incrementAmount + '" onchange="updateSetting(\'incrementAmount\', this.value)"';
+            html += ' class="w-full px-4 py-2 bg-gray-700 rounded-lg text-white" step="0.10"></div>';
+            html += '<div><label class="block text-sm mb-2">Intervalo de Incremento (segundos)</label>';
+            html += '<input type="number" value="' + s.incrementInterval + '" onchange="updateSetting(\'incrementInterval\', this.value)"';
+            html += ' class="w-full px-4 py-2 bg-gray-700 rounded-lg text-white" step="1"></div>';
+            html += '</div>';
+
+            html += '<div class="mt-6 bg-gray-800 rounded-xl p-4 text-sm text-gray-300">';
+            html += '<h3 class="font-bold mb-2">Instrucciones PWA:</h3>';
+            html += '<ul class="space-y-1 list-disc list-inside">';
+            html += '<li>En Chrome/Edge: Menú → "Instalar app"</li>';
+            html += '<li>En Safari: Compartir → "Añadir a inicio"</li>';
+            html += '<li>Los datos se guardan localmente</li>';
+            html += '</ul></div></div>';
+            return html;
+        }
+
+        function render() {
+            var html = '';
+            if (State.currentView === 'history') {
+                html = renderHistory();
+            } else if (State.currentView === 'settings') {
+                html = renderSettings();
+            } else {
+                html = renderMain();
+            }
+            document.getElementById('app').innerHTML = html;
+        }
+
+        // Registro del Service Worker
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+                .then(registration => {
+                    console.log('Service Worker registrado con éxito. Scope:', registration.scope);
+                })
+                .catch(error => {
+                    console.error('Fallo el registro del Service Worker:', error);
+                });
+        });
+    }
+
+   // Inicialización
+        loadData();
+        render();
+    </script>
+</body>
+</html>
